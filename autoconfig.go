@@ -59,9 +59,9 @@ func (c *Config) AddValidator(f func(old, new *Config) error) {
 	c.Unlock()
 }
 
-// Get looks up a configuration item in dotted path notation and returns the first (or only) value.
-// Example: c.Get("spanner.database.path")
-func (c *Config) Get(path string) string {
+// GetRaw looks up the raw configuration item and does not do any conversion to a particular type.
+// This is generally only used by the other Get* functions but is exposed for convenience.
+func (c *Config) GetRaw(path string) interface{} {
 	c.RLock()
 	defer c.RUnlock()
 	values, err := c.mv.ValuesForPath(path)
@@ -71,7 +71,55 @@ func (c *Config) Get(path string) string {
 	if len(values) == 0 {
 		return ""
 	}
-	return values[0].(string)
+	return values[0]
+}
+
+// Get looks up a configuration item in dotted path notation and returns the first (or only) value in string form.
+// Example: c.Get("spanner.database.path")
+func (c *Config) Get(path string) string {
+	i := c.GetRaw(path)
+	if i == nil {
+		return ""
+	}
+	switch t := i.(type) {
+	case string:
+		return t
+	default:
+		log.Printf("Error in value %q, expected string, got %T", path, t)
+		return ""
+	}
+}
+
+// GetFloat looks up a configuration item in dotted path notation and returns the first (or only) value in float64 form.
+func (c *Config) GetFloat(path string) float64 {
+	i := c.GetRaw(path)
+	if i == nil {
+		return 0
+	}
+	switch t := i.(type) {
+	case float64:
+		return t
+	default:
+		log.Printf("Error in value %q, expected float64, got %T", path, t)
+		return 0
+	}
+}
+
+// GetFloat looks up a configuration item in dotted path notation and returns the first (or only) value in int form.
+func (c *Config) GetInt(path string) int {
+	i := c.GetRaw(path)
+	if i == nil {
+		return 0
+	}
+	switch t := i.(type) {
+	case int:
+		return t
+	case float64:
+		return int(t)
+	default:
+		log.Printf("Error in value %q, expected int, got %T", path, t)
+		return 0
+	}
 }
 
 // Get looks up a configuration item in dotted path notation and returns a list of values.
