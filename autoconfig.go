@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 	"sync"
 	"time"
 
@@ -146,24 +147,14 @@ func (c *Config) read() error {
 		return fmt.Errorf("couldn't read config file %q: %v", c.filename, err)
 	}
 
-	if err := c.readJSON(body); err == nil {
-		return nil
-	}
-
-	if err := c.readYAML(body); err == nil {
-		return nil
-	}
-
-	return fmt.Errorf("couldn't parse config: %v", err)
-}
-
-func (c *Config) readJSON(body []byte) error {
 	mv, err := mxj.NewMapJson(body)
 	if err != nil {
-		return err
+		mv, err = c.readYAML(body)
+		if err != nil {
+			return fmt.Errorf("couldn't parse config: %v", err)
+		}
 	}
 
-	// Valid JSON.
 	newConfig := &Config{mv: mv}
 	for _, f := range c.validators {
 		if err := f(c, newConfig); err != nil {
@@ -178,19 +169,10 @@ func (c *Config) readJSON(body []byte) error {
 	return nil
 }
 
-func (c *Config) readYAML(body []byte) error {
+func (c *Config) readYAML(body []byte) (mxj.Map, error) {
 	mv := mxj.Map{}
 	if err := yaml.Unmarshal(body, &mv); err != nil {
-		return err
-	}
-
-	// Valid YAML.
-	newConfig := &Config{mv: mv}
-	for _, f := range c.validators {
-		if err := f(c, newConfig); err != nil {
-			log.Printf("Config validation failed: %v", err)
-			return err
-		}
+		return nil, err
 	}
 
 	// This is nasty. yaml.Unmarshal returns maps as map[interface{}]interface{},
@@ -206,10 +188,7 @@ func (c *Config) readYAML(body []byte) error {
 		}
 	}
 
-	c.Lock()
-	c.mv = mv
-	c.Unlock()
-	return nil
+	return mv, nil
 }
 
 func convertInterfaceToString(mv map[interface{}]interface{}) map[string]interface{} {
@@ -253,14 +232,14 @@ func (c *Config) background(ctx context.Context, watcher *fsnotify.Watcher) {
 }
 
 // Required marks a configuration entry as required.
-// If the value is missing at startup, a fatal message will be logged.
+// If the value is missing at startup, the call will panic.
 // If the value is missing when the configuration changes, the new configuration will be rejected.
 func (c *Config) Required(key string) {
-	if c.Get(key) == "" {
-		log.Fatalf("%q is missing from the initial configuration", key)
+	if c.GetRaw(key) == nil {
+		panic(fmt.Sprintf("%q is missing from the initial configuration", key))
 	}
 	c.AddValidator(func(old, new *Config) error {
-		if new.Get(key) == "" {
+		if new.GetRaw(key) == nil {
 			return fmt.Errorf("%q is missing from the configuration", key)
 		}
 		return nil
@@ -271,7 +250,7 @@ func (c *Config) Required(key string) {
 // If the value changes when the configuration is updated, the new configuration will be rejected.
 func (c *Config) Immutable(key string) {
 	c.AddValidator(func(old, new *Config) error {
-		if new.Get(key) != old.Get(key) {
+		if !reflect.DeepEqual(new.GetRaw(key), old.GetRaw(key)) {
 			return fmt.Errorf("%q is marked as immutable and has changed, rejecting new configuration", key)
 		}
 		return nil
