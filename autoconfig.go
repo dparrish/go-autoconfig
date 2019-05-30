@@ -1,4 +1,4 @@
-// Package autoconfig wraps a JSON configuration stored on disk that is queryable using the Get* functions.
+// Package autoconfig wraps a JSON or YAML configuration stored on disk that is queryable using the Get* functions.
 //
 // The configuration file will be watched for changes after the initial load. Whenever the file has changed, each
 // validation function will be called in the order they were added.
@@ -14,11 +14,12 @@ import (
 	"github.com/clbanning/mxj"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/afero"
+	"gopkg.in/yaml.v2"
 )
 
 var Fs = afero.NewOsFs()
 
-// Config wraps a JSON configuration stored on disk and provides functions to query it.
+// Config wraps a JSON/YAML configuration stored on disk and provides functions to query it.
 type Config struct {
 	sync.RWMutex
 	filename   string
@@ -69,7 +70,7 @@ func (c *Config) GetRaw(path string) interface{} {
 		log.Printf("Error in ValuesForPath(%q): %v", path, err)
 	}
 	if len(values) == 0 {
-		return ""
+		return nil
 	}
 	return values[0]
 }
@@ -84,8 +85,10 @@ func (c *Config) Get(path string) string {
 	switch t := i.(type) {
 	case string:
 		return t
+	case []byte:
+		return string(t)
 	default:
-		log.Printf("Error in value %q, expected string, got %T", path, t)
+		log.Printf("Get() Error in value %q, expected string, got %T", path, t)
 		return ""
 	}
 }
@@ -100,7 +103,7 @@ func (c *Config) GetFloat(path string) float64 {
 	case float64:
 		return t
 	default:
-		log.Printf("Error in value %q, expected float64, got %T", path, t)
+		log.Printf("GetFloat() Error in value %q, expected float64, got %T", path, t)
 		return 0
 	}
 }
@@ -117,7 +120,7 @@ func (c *Config) GetInt(path string) int {
 	case float64:
 		return int(t)
 	default:
-		log.Printf("Error in value %q, expected int, got %T", path, t)
+		log.Printf("GetInt() Error in value %q, expected int, got %T", path, t)
 		return 0
 	}
 }
@@ -142,11 +145,25 @@ func (c *Config) read() error {
 	if err != nil {
 		return fmt.Errorf("couldn't read config file %q: %v", c.filename, err)
 	}
-	mv, err := mxj.NewMapJson(body)
-	if err != nil {
-		return fmt.Errorf("couldn't parse config: %v", err)
+
+	if err := c.readJSON(body); err == nil {
+		return nil
 	}
 
+	if err := c.readYAML(body); err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("couldn't parse config: %v", err)
+}
+
+func (c *Config) readJSON(body []byte) error {
+	mv, err := mxj.NewMapJson(body)
+	if err != nil {
+		return err
+	}
+
+	// Valid JSON.
 	newConfig := &Config{mv: mv}
 	for _, f := range c.validators {
 		if err := f(c, newConfig); err != nil {
@@ -159,6 +176,52 @@ func (c *Config) read() error {
 	c.mv = mv
 	c.Unlock()
 	return nil
+}
+
+func (c *Config) readYAML(body []byte) error {
+	mv := mxj.Map{}
+	if err := yaml.Unmarshal(body, &mv); err != nil {
+		return err
+	}
+
+	// Valid YAML.
+	newConfig := &Config{mv: mv}
+	for _, f := range c.validators {
+		if err := f(c, newConfig); err != nil {
+			log.Printf("Config validation failed: %v", err)
+			return err
+		}
+	}
+
+	// This is nasty. yaml.Unmarshal returns maps as map[interface{}]interface{},
+	// where mxj expects them to be map[string]interface{} and won't find nested
+	// values unless it's the correct type. This horrible code converts the
+	// former to the latter.
+	//
+	// TODO(dparrish): Get rid of it.
+	for k, v := range mv {
+		switch t := v.(type) {
+		case map[interface{}]interface{}:
+			mv[k] = convertInterfaceToString(t)
+		}
+	}
+
+	c.Lock()
+	c.mv = mv
+	c.Unlock()
+	return nil
+}
+
+func convertInterfaceToString(mv map[interface{}]interface{}) map[string]interface{} {
+	r := map[string]interface{}{}
+	for k, v := range mv {
+		r[k.(string)] = v
+		switch t := v.(type) {
+		case map[interface{}]interface{}:
+			r[k.(string)] = convertInterfaceToString(t)
+		}
+	}
+	return r
 }
 
 func (c *Config) background(ctx context.Context, watcher *fsnotify.Watcher) {
