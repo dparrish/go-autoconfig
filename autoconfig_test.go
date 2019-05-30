@@ -1,7 +1,6 @@
 package autoconfig
 
 import (
-	"context"
 	"errors"
 	"log"
 	"os"
@@ -67,8 +66,8 @@ func TestMain(m *testing.M) {
 
 func loadJSONConfig() *Config {
 	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[0]), 0644)
-	c, err := Load(context.Background(), "test.config")
-	if err != nil {
+	c := New("test.config")
+	if err := c.Load(); err != nil {
 		log.Println(err)
 		return nil
 	}
@@ -77,8 +76,8 @@ func loadJSONConfig() *Config {
 
 func loadYAMLConfig() *Config {
 	afero.WriteFile(Fs, "test.config", []byte(validYAMLConfig), 0644)
-	c, err := Load(context.Background(), "test.config")
-	if err != nil {
+	c := New("test.config")
+	if err := c.Load(); err != nil {
 		log.Println(err)
 		return nil
 	}
@@ -87,16 +86,14 @@ func loadYAMLConfig() *Config {
 
 func TestInvalidConfig(t *testing.T) {
 	afero.WriteFile(Fs, "test.config", []byte("blahblah"), 0644)
-	c, err := Load(context.Background(), "test.config")
-	assert.Nil(t, c)
-	assert.NotNil(t, err)
+	c := New("test.config")
+	assert.NotNil(t, c.Load())
 }
 
 func TestLoadJSON(t *testing.T) {
 	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[0]), 0644)
-	c, err := Load(context.Background(), "test.config")
-	assert.Nil(t, err)
-	assert.NotNil(t, c)
+	c := New("test.config")
+	assert.Nil(t, c.Load())
 }
 
 func TestGetJSON(t *testing.T) {
@@ -173,31 +170,36 @@ func TestValidator(t *testing.T) {
 }
 
 func TestImmutable(t *testing.T) {
-	c := loadJSONConfig()
-	require.NotNil(t, c)
+	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[0]), 0644)
+	c := New("test.config")
+	c.Immutable("var1")
+
+	// Immutable checks are not done on the initial load.
+	assert.Nil(t, c.Load())
+
+	// Ensure that the loaded value is correct to start with.
+	assert.Equal(t, "value1", c.Get("var1"))
 
 	// Second config changes var1 which is marked as immutable.
-	c.Immutable("var1")
 	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[1]), 0644)
 	assert.NotNil(t, c.read())
 
-	// Third config changes hash1.intval1 which is marked as immutable.
-	c.Immutable("hash1.intval1")
-	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[2]), 0644)
-	assert.NotNil(t, c.read())
+	// Ensure that the loaded configuration value has not changed.
+	assert.Equal(t, "value1", c.Get("var1"))
 }
 
 func TestRequiredOnInitialLoad(t *testing.T) {
-	c := loadJSONConfig()
-	require.NotNil(t, c)
-	assert.NotPanics(t, func() { c.Required("hash1.intval1") })
-	assert.Panics(t, func() { c.Required("hash1.intval2") })
+	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[0]), 0644)
+	c := New("test.config")
+	c.Required("hash1.intval2")
+	assert.NotNil(t, c.Load())
 }
 
 func TestRequiredOnUpdate(t *testing.T) {
-	c := loadJSONConfig()
-	require.NotNil(t, c)
-	assert.NotPanics(t, func() { c.Required("hash1.hash1var1") })
+	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[0]), 0644)
+	c := New("test.config")
+	c.Required("hash1.hash1var1")
+	assert.Nil(t, c.Load())
 
 	// Second config is missing hash1.hash1var1 so the reload should fail.
 	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[1]), 0644)

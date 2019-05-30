@@ -26,15 +26,23 @@ type Config struct {
 	filename   string
 	mv         mxj.Map
 	validators []func(old *Config, new *Config) error
+	loaded     bool
+}
+
+// New creates a new empty configuration.
+func New(filename string) *Config {
+	return &Config{
+		filename: filename,
+		mv:       mxj.Map{},
+	}
 }
 
 // Load loads a configuration file from disk.
-func Load(ctx context.Context, filename string) (*Config, error) {
-	c := &Config{filename: filename}
+func (c *Config) Load() error {
 	if err := c.read(); err != nil {
-		return nil, fmt.Errorf("unable to read initial config: %v", err)
+		return fmt.Errorf("unable to read initial config: %v", err)
 	}
-	return c, nil
+	return nil
 }
 
 // Watch starts a background goroutine to watch for changes in the configuration.
@@ -155,7 +163,10 @@ func (c *Config) read() error {
 		}
 	}
 
-	newConfig := &Config{mv: mv}
+	newConfig := &Config{
+		filename: c.filename,
+		mv:       mv,
+	}
 	for _, f := range c.validators {
 		if err := f(c, newConfig); err != nil {
 			log.Printf("Config validation failed: %v", err)
@@ -165,6 +176,7 @@ func (c *Config) read() error {
 
 	c.Lock()
 	c.mv = mv
+	c.loaded = true
 	c.Unlock()
 	return nil
 }
@@ -235,9 +247,6 @@ func (c *Config) background(ctx context.Context, watcher *fsnotify.Watcher) {
 // If the value is missing at startup, the call will panic.
 // If the value is missing when the configuration changes, the new configuration will be rejected.
 func (c *Config) Required(key string) {
-	if c.GetRaw(key) == nil {
-		panic(fmt.Sprintf("%q is missing from the initial configuration", key))
-	}
 	c.AddValidator(func(old, new *Config) error {
 		if new.GetRaw(key) == nil {
 			return fmt.Errorf("%q is missing from the configuration", key)
@@ -250,6 +259,10 @@ func (c *Config) Required(key string) {
 // If the value changes when the configuration is updated, the new configuration will be rejected.
 func (c *Config) Immutable(key string) {
 	c.AddValidator(func(old, new *Config) error {
+		if !old.loaded {
+			// Don't validate changes on the initial load.
+			return nil
+		}
 		if !reflect.DeepEqual(new.GetRaw(key), old.GetRaw(key)) {
 			return fmt.Errorf("%q is marked as immutable and has changed, rejecting new configuration", key)
 		}
