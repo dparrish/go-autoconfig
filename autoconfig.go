@@ -25,6 +25,7 @@ type Config struct {
 	sync.RWMutex
 	filename   string
 	mv         mxj.Map
+	defaults   mxj.Map
 	validators []func(old *Config, new *Config) error
 	loaded     bool
 }
@@ -34,6 +35,7 @@ func New(filename string) *Config {
 	return &Config{
 		filename: filename,
 		mv:       mxj.Map{},
+		defaults: mxj.Map{},
 	}
 }
 
@@ -78,10 +80,19 @@ func (c *Config) GetRaw(path string) interface{} {
 	if err != nil {
 		log.Printf("Error in ValuesForPath(%q): %v", path, err)
 	}
-	if len(values) == 0 {
-		return nil
+	if len(values) != 0 {
+		return values[0]
 	}
-	return values[0]
+
+	values, err = c.defaults.ValuesForPath(path)
+	if err != nil {
+		log.Printf("Error in ValuesForPath(%q): %v", path, err)
+	}
+	if len(values) != 0 {
+		return values[0]
+	}
+
+	return nil
 }
 
 // Get looks up a configuration item in dotted path notation and returns the first (or only) value in string form.
@@ -142,6 +153,19 @@ func (c *Config) GetAll(path string) []string {
 	if err != nil {
 		log.Printf("Error in ValuesForPath(%q): %v", path, err)
 	}
+
+	if values == nil || len(values) == 0 {
+		values, err = c.defaults.ValuesForPath(path)
+		if err != nil {
+			log.Printf("Error in ValuesForPath(%q): %v", path, err)
+		}
+	}
+
+	if values == nil || len(values) == 0 {
+		// Return an empty slice instead of nil so that client code doesn't have to check for nil.
+		return []string{}
+	}
+
 	r := make([]string, 0, len(values))
 	for _, v := range values {
 		r = append(r, v.(string))
@@ -268,4 +292,9 @@ func (c *Config) Immutable(key string) {
 		}
 		return nil
 	})
+}
+
+// Default sets the default value of an entry.
+func (c *Config) Default(key string, value interface{}) {
+	c.defaults.SetValueForPath(value, key)
 }

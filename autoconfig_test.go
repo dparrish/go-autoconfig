@@ -205,3 +205,10 @@ func TestRequiredOnUpdate(t *testing.T) {
 	afero.WriteFile(Fs, "test.config", []byte(JSONConfigs[1]), 0644)
 	assert.NotNil(t, c.read())
 }
+
+func TestDefault(t *testing.T) {
+	c := loadJSONConfig()
+	assert.Equal(t, "", c.Get("var2"))
+	c.Default("var2", "this is a key")
+	assert.Equal(t, "this is a key", c.Get("var2"))
+}
