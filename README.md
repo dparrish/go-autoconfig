@@ -18,10 +18,6 @@ func main() {
 	// Ensure that hash.value.cannot.change doesn't change on configuration reload.
 	config.Immutable("hash.value.cannot.change")
 
-	if err := config.Load(); err != nil {
-		panic("Configuration is invalid")
-	}
-
 	// Validate values whenever configuration is loaded.
 	config.AddValidator(func(old, new *autoconfig.Config) error {
 		if new.GetInt("intvalue") > 1000 {
@@ -29,6 +25,10 @@ func main() {
 		}
 		return nil
 	})
+
+	if err := config.Load(); err != nil {
+		panic("Configuration is invalid")
+	}
 
 	// Start a background goroutine that will reload configuration whenever it changes.
 	if err := config.Watch(context.Background()); err != nil {
