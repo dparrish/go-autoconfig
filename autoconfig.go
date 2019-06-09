@@ -173,6 +173,38 @@ func (c *Config) GetAll(path string) []string {
 	return r
 }
 
+// GetMapList looks up a configuration item and returns a list of maps for each.
+func (c *Config) GetMapList(path string) []map[string]interface{} {
+	c.RLock()
+	defer c.RUnlock()
+	values, err := c.mv.ValuesForPath(path)
+	if err != nil {
+		log.Printf("Error in ValuesForPath(%q): %v", path, err)
+	}
+
+	if values == nil || len(values) == 0 {
+		values, err = c.defaults.ValuesForPath(path)
+		if err != nil {
+			log.Printf("Error in ValuesForPath(%q): %v", path, err)
+		}
+	}
+
+	if values == nil || len(values) == 0 {
+		// Return an empty slice instead of nil so that client code doesn't have to check for nil.
+		return []map[string]interface{}{}
+	}
+
+	r := make([]map[string]interface{}, 0, len(values))
+	for _, v := range values {
+		m := make(map[string]interface{})
+		for key, value := range v.(map[interface{}]interface{}) {
+			m[key.(string)] = value
+		}
+		r = append(r, m)
+	}
+	return r
+}
+
 func (c *Config) read() error {
 	body, err := afero.ReadFile(Fs, c.filename)
 	if err != nil {
@@ -268,7 +300,6 @@ func (c *Config) background(ctx context.Context, watcher *fsnotify.Watcher) {
 }
 
 // Required marks a configuration entry as required.
-// If the value is missing at startup, the call will panic.
 // If the value is missing when the configuration changes, the new configuration will be rejected.
 func (c *Config) Required(key string) {
 	c.AddValidator(func(old, new *Config) error {

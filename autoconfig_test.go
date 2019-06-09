@@ -55,6 +55,12 @@ hash1:
     hashlist:
       - key: value
       - key: value2
+  interfacelist:
+    - key: key1
+      value: value1
+      extra: extra1
+    - key: key2
+      value: value2
   intval1: 15
   floatval: 15.5
 `
@@ -146,6 +152,16 @@ func TestGetAllYAML(t *testing.T) {
 	c := loadYAMLConfig()
 	require.NotNil(t, c)
 	assert.Equal(t, []string{"foo", "bar"}, c.GetAll("hash1.hash2.hash2var1"))
+}
+
+func TestGetMapListYAML(t *testing.T) {
+	c := loadYAMLConfig()
+	require.NotNil(t, c)
+	m := c.GetMapList("hash1.interfacelist")
+	assert.Equal(t, "value1", m[0]["value"].(string))
+	assert.Equal(t, "extra1", m[0]["extra"].(string))
+	assert.Equal(t, "value2", m[1]["value"].(string))
+	assert.Equal(t, nil, m[1]["extra"])
 }
 
 func TestValidator(t *testing.T) {
